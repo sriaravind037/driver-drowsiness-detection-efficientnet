@@ -219,40 +219,36 @@ with col_left:
 
         images_to_analyze = [(lbl, im) for _, lbl, im in st.session_state.captured_frames]
 
-    # MODE 3: AUTO-MONITOR MODE (AUTOMATICALLY CAPTURES 4 FRAMES ONE BY ONE)
+    # MODE 3: AUTO-MONITOR MODE (REAL PYTHON 4-FRAME CAPTURE & AUTO-ANALYSIS)
     elif input_mode.startswith("3."):
-        st.info("Automatically captures 4 consecutive snapshots from your webcam once enabled.")
-        auto_run = st.toggle("🟢 Start Automatic 4-Frame Webcam Monitoring", value=False)
+        st.info("Click **Take Photo** below for each frame (1 to 4). Once 4 frames are captured, EfficientNetB0 analyzes all 4 automatically!")
         
-        if auto_run:
-            # Pure HTML5/JS WebRTC auto-snapper that takes 4 frames automatically
-            auto_cam_html = """
-            <div style="text-align:center; font-family:sans-serif;">
-                <video id="vid" width="100%" autoplay playsinline style="border-radius:10px; border:2px solid #00c8ff;"></video>
-                <p id="status" style="font-weight:bold; color:#00c8ff; margin-top:8px;">Initializing camera for 4-frame sequence...</p>
-                <canvas id="canvas" width="320" height="240" style="display:none;"></canvas>
-            </div>
-            <script>
-            const video = document.getElementById('vid');
-            const status = document.getElementById('status');
-            navigator.mediaDevices.getUserMedia({ video: true }).then(stream => {
-                video.srcObject = stream;
-                let count = 0;
-                const timer = setInterval(() => {
-                    count++;
-                    status.innerText = `📸 Auto-capturing Frame ${count} of 4...`;
-                    if (count >= 4) {
-                        clearInterval(timer);
-                        status.innerText = "✅ 4-Frame Sequence Captured! Use Mode 1 or 2 below if browser blocks auto-upload.";
-                    }
-                }, 1500);
-            }).catch(err => {
-                status.innerText = "Camera permission needed: " + err;
-            });
-            </script>
-            """
-            st.components.v1.html(auto_cam_html, height=310)
-            st.caption("Tip: Due to browser security sandboxing on Streamlit Cloud, if automatic frame transfer is restricted, switch to **Mode 2** to click-capture 4 frames sequentially.")
+        if "auto_frames" not in st.session_state:
+            st.session_state.auto_frames = []
+
+        col_a, col_b = st.columns([2, 1])
+        with col_a:
+            st.progress(len(st.session_state.auto_frames) / max_frames, text=f"Captured {len(st.session_state.auto_frames)} of {max_frames} frames")
+        with col_b:
+            if st.button("🔄 Reset Cycle", use_container_width=True):
+                st.session_state.auto_frames = []
+                st.session_state.last_alert_signature = ""
+                st.rerun()
+
+        if len(st.session_state.auto_frames) < max_frames:
+            # Uses dynamic key so camera resets immediately after each capture
+            snap = st.camera_input(
+                f"📸 Capture Frame {len(st.session_state.auto_frames) + 1} of {max_frames}",
+                key=f"auto_cam_{len(st.session_state.auto_frames)}"
+            )
+            if snap is not None:
+                lbl = f"Auto_Frame_{len(st.session_state.auto_frames) + 1}.jpg"
+                st.session_state.auto_frames.append((lbl, Image.open(snap).convert("RGB")))
+                st.rerun()
+        else:
+            st.success(f"✅ All {max_frames} frames captured and analyzed on the right!")
+
+        images_to_analyze = st.session_state.auto_frames
 
 # ==========================================
 # 6. RIGHT PANEL: BATCH EFFICIENTNETB0 INFERENCE
