@@ -217,7 +217,7 @@ with col_left:
         else:
             st.success(f"✅ All {max_frames} frames captured! View analysis on the right.")
 
-       images_to_analyze = [(lbl, im) for _, lbl, im in st.session_state.captured_frames]
+        images_to_analyze = [(lbl, im) for _, lbl, im in st.session_state.captured_frames]
 
     # MODE 3: AUTO-MONITOR MODE (AUTOMATICALLY CAPTURES 4 FRAMES ONE BY ONE)
     elif input_mode.startswith("3."):
