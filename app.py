@@ -218,38 +218,81 @@ with col_left:
             st.success(f"✅ All {max_frames} frames captured! View analysis on the right.")
 
         images_to_analyze = [(lbl, im) for _, lbl, im in st.session_state.captured_frames]
-
-    # MODE 3: AUTO-MONITOR MODE (REAL PYTHON 4-FRAME CAPTURE & AUTO-ANALYSIS)
+# MODE 3: TRUE HANDS-FREE AUTO-CAPTURE (TAKES 4 PHOTOS AUTOMATICALLY & ANALYZES)
     elif input_mode.startswith("3."):
-        st.info("Click **Take Photo** below for each frame (1 to 4). Once 4 frames are captured, EfficientNetB0 analyzes all 4 automatically!")
-        
-        if "auto_frames" not in st.session_state:
-            st.session_state.auto_frames = []
+        import io
+        st.info("Click **Start Auto-Capture** once. The webcam will automatically snap 4 frames one by one and analyze them!")
 
-        col_a, col_b = st.columns([2, 1])
-        with col_a:
-            st.progress(len(st.session_state.auto_frames) / max_frames, text=f"Captured {len(st.session_state.auto_frames)} of {max_frames} frames")
-        with col_b:
-            if st.button("🔄 Reset Cycle", use_container_width=True):
-                st.session_state.auto_frames = []
-                st.session_state.last_alert_signature = ""
+        if "webrtc_frames" not in st.session_state:
+            st.session_state.webrtc_frames = []
+
+        # Receive captured frames sent from browser camera
+        if "auto_batch" in st.query_params:
+            try:
+                raw_b64_list = st.query_params["auto_batch"].split("|")
+                decoded_imgs = []
+                for idx, b64_str in enumerate(raw_b64_list[:max_frames]):
+                    if b64_str:
+                        img_bytes = base64.b64decode(b64_str)
+                        im = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+                        decoded_imgs.append((f"Auto_Cam_Frame_{idx+1}.jpg", im))
+                if decoded_imgs:
+                    st.session_state.webrtc_frames = decoded_imgs
+                del st.query_params["auto_batch"]
                 st.rerun()
+            except Exception as e:
+                st.error(f"Frame transfer error: {e}")
 
-        if len(st.session_state.auto_frames) < max_frames:
-            # Uses dynamic key so camera resets immediately after each capture
-            snap = st.camera_input(
-                f"📸 Capture Frame {len(st.session_state.auto_frames) + 1} of {max_frames}",
-                key=f"auto_cam_{len(st.session_state.auto_frames)}"
-            )
-            if snap is not None:
-                lbl = f"Auto_Frame_{len(st.session_state.auto_frames) + 1}.jpg"
-                st.session_state.auto_frames.append((lbl, Image.open(snap).convert("RGB")))
-                st.rerun()
-        else:
-            st.success(f"✅ All {max_frames} frames captured and analyzed on the right!")
+        c1, c2 = st.columns(2)
+        start_auto = c1.button("▶️ Start Auto-Capture (4 Frames)", type="primary", use_container_width=True)
+        if c2.button("🗑️ Clear Auto Frames", use_container_width=True):
+            st.session_state.webrtc_frames = []
+            st.session_state.last_alert_signature = ""
+            st.rerun()
 
-        images_to_analyze = st.session_state.auto_frames
+        if start_auto:
+            auto_capture_js = f"""
+            <div style="text-align:center; font-family:sans-serif; background:#111; padding:12px; border-radius:10px; border:2px solid #00c8ff;">
+                <video id="vid" width="100%" autoplay playsinline style="border-radius:8px;"></video>
+                <p id="msg" style="color:#00ffcc; font-weight:bold; margin-top:8px;">Starting webcam...</p>
+                <canvas id="cvs" width="224" height="224" style="display:none;"></canvas>
+            </div>
+            <script>
+            const video = document.getElementById('vid');
+            const msg = document.getElementById('msg');
+            const canvas = document.getElementById('cvs');
+            const ctx = canvas.getContext('2d');
+            const totalFrames = {max_frames};
+            let frames = [];
 
+            navigator.mediaDevices.getUserMedia({{ video: true }}).then(stream => {{
+                video.srcObject = stream;
+                let count = 0;
+                const interval = setInterval(() => {{
+                    count++;
+                    ctx.drawImage(video, 0, 0, 224, 224);
+                    // Compress as lightweight JPEG so URL transfer is instant
+                    const dataUrl = canvas.toDataURL('image/jpeg', 0.65);
+                    frames.push(dataUrl.split(',')[1]);
+                    msg.innerText = `📸 Captured Frame ${{count}} of ${{totalFrames}} automatically...`;
+
+                    if (count >= totalFrames) {{
+                        clearInterval(interval);
+                        stream.getTracks().forEach(t => t.stop());
+                        msg.innerText = "✅ All 4 frames captured! Sending to EfficientNetB0...";
+                        const url = new URL(window.parent.location.href);
+                        url.searchParams.set('auto_batch', frames.join('|'));
+                        window.parent.location.href = url.toString();
+                    }}
+                }}, 1200);
+            }}).catch(err => {{
+                msg.innerText = "⚠️ Camera access denied: " + err;
+            }});
+            </script>
+            """
+            st.components.v1.html(auto_capture_js, height=320)
+
+        images_to_analyze = st.session_state.webrtc_frames
 # ==========================================
 # 6. RIGHT PANEL: BATCH EFFICIENTNETB0 INFERENCE
 # ==========================================
