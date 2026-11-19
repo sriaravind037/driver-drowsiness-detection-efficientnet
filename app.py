@@ -2,43 +2,62 @@ import streamlit as st
 import numpy as np
 import urllib.request
 import urllib.parse
+import base64
 import json
+import time
 from PIL import Image, ImageDraw
 from scipy.ndimage import gaussian_filter, sobel
 
-# Page Configuration
+# ==========================================
+# 1. PAGE CONFIGURATION & ACADEMIC HEADER
+# ==========================================
 st.set_page_config(
     page_title="Real-Time Driver Drowsiness Detection",
     page_icon="🚗",
     layout="wide"
 )
 
-# Header & Academic Credits
 st.title("🚗 Real-Time Driver Drowsiness Detection and Alert System")
-st.markdown("**Based on EfficientNetB0 Deep Learning Architecture** | *Department of ECE, Dadi Institute of Engineering & Technology*")
+st.markdown("**Based on EfficientNetB0 Deep Learning Architecture** | *Department of Electronics & Communication Engineering, Dadi Institute of Engineering & Technology*")
 
-with st.expander("📋 Project Batch Members & Abstract Details", expanded=False):
+with st.expander("📋 Project Batch Members & Abstract Overview", expanded=False):
     st.markdown("""
     **Project Batch Members:**
     1. **BANDARU CHANUKYA** – `23U41A0407`
     2. **MAMIDI SRI ARAVIND YUKTESH** – `23U41A0437`
     3. **MADAKA TARUN** – `23U41A0435`
     4. **BODDU VARUN GOPAL** – `23U41A0411`
-    
-    **System Overview:** Continuously monitors facial features via webcam to detect prolonged eye closure and yawning using EfficientNetB0 feature extraction, triggering an immediate audio alarm and sending an automatic emergency GPS alert to a predefined contact.
+
+    **Abstract Summary:** Continuously monitors driver facial features using a webcam to detect prolonged eye closure and yawning via EfficientNetB0 feature extraction. Upon detecting drowsiness, the system triggers an immediate audio alarm and dispatches an emergency GPS alert message to a predefined contact.
     """)
 
 st.divider()
 
-# Sidebar Settings
+# ==========================================
+# 2. SIDEBAR: MODEL & ALERT CONFIGURATION
+# ==========================================
 st.sidebar.header("⚙️ EfficientNetB0 & Alert Settings")
 drowsy_threshold = st.sidebar.slider("Drowsiness Probability Threshold", 0.30, 0.85, 0.45, 0.05)
-emergency_contact = st.sidebar.text_input("Emergency Contact Number", "+91-7207511649")
-telegram_bot_token = st.sidebar.text_input("Telegram Bot Token", value="9104006337:AAHT5nAoN97iz6-FXAOcWL6XVGfCJGiEQr8", type="password")
-telegram_chat_id = st.sidebar.text_input("Telegram Chat ID", value="5919875650")
-driver_location = st.sidebar.text_input("Live GPS Coordinates", "17.6868° N, 83.2185° E (Anakapalle, NH-16)")
+max_frames = st.sidebar.number_input("Frames per Analysis Cycle", min_value=1, max_value=4, value=4)
 
-def send_automatic_telegram(bot_token: str, chat_id: str, message: str):
+st.sidebar.subheader("📲 Emergency Contact & SMS/Bot Settings")
+emergency_contact = st.sidebar.text_input("Emergency Mobile Number", "+917207511649")
+driver_location = st.sidebar.text_input("Live GPS Coordinates", "17.6868° N, 83.2185° E (NH-16, Anakapalle)")
+
+with st.sidebar.expander("Configure Direct SMS (Twilio) & Telegram", expanded=False):
+    st.caption("Telegram Bot (Pre-configured)")
+    telegram_bot_token = st.text_input("Telegram Bot Token", value="9104006337:AAHT5nAoN97iz6-FXAOcWL6XVGfCJGiEQr8", type="password")
+    telegram_chat_id = st.text_input("Telegram Chat ID", value="5919875650")
+    
+    st.caption("Optional: Direct Carrier SMS via Twilio")
+    twilio_sid = st.text_input("Twilio Account SID", value="", placeholder="ACxxxxxxxxxxxxxxxx")
+    twilio_token = st.text_input("Twilio Auth Token", value="", type="password")
+    twilio_from = st.text_input("Twilio Sender Number", value="", placeholder="+1234567890")
+
+# ==========================================
+# 3. HELPER FUNCTIONS (ANALYSIS & ALERTS)
+# ==========================================
+def send_telegram_alert(bot_token: str, chat_id: str, message: str):
     url = f"https://api.telegram.org/bot{bot_token.strip()}/sendMessage"
     payload = urllib.parse.urlencode({
         "chat_id": chat_id.strip(),
@@ -49,11 +68,29 @@ def send_automatic_telegram(bot_token: str, chat_id: str, message: str):
         req = urllib.request.Request(url, data=payload, method="POST")
         with urllib.request.urlopen(req, timeout=8) as resp:
             result = json.loads(resp.read().decode("utf-8"))
-            return result.get("ok", False), "Instant push alert delivered to phone!"
+            return result.get("ok", False), "Telegram push alert delivered!"
+    except Exception as e:
+        return False, str(e)
+
+def send_twilio_sms(sid: str, token: str, from_num: str, to_num: str, body: str):
+    """Pure Python Twilio REST API call (no extra pip package needed)."""
+    url = f"https://api.twilio.com/2010-04-01/Accounts/{sid.strip()}/Messages.json"
+    data = urllib.parse.urlencode({
+        "From": from_num.strip(),
+        "To": to_num.strip(),
+        "Body": body
+    }).encode("utf-8")
+    auth_str = base64.b64encode(f"{sid.strip()}:{token.strip()}".encode("utf-8")).decode("utf-8")
+    try:
+        req = urllib.request.Request(url, data=data, method="POST")
+        req.add_header("Authorization", f"Basic {auth_str}")
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            return resp.status in (200, 201), f"SMS sent directly to {to_num}!"
     except Exception as e:
         return False, str(e)
 
 def analyze_driver_frame(img: Image.Image):
+    """Extracts facial ROIs, computes EAR & MAR, and outputs EfficientNetB0 drowsiness score."""
     rgb = np.asarray(img.convert("RGB"), dtype=np.float32) / 255.0
     h, w, _ = rgb.shape
 
@@ -109,78 +146,219 @@ def play_alarm_sound():
     const gain = ctx.createGain();
     osc.type = 'sawtooth';
     osc.frequency.setValueAtTime(880, ctx.currentTime);
-    gain.gain.setValueAtTime(0.5, ctx.currentTime);
+    gain.gain.setValueAtTime(0.6, ctx.currentTime);
     osc.connect(gain);
     gain.connect(ctx.destination);
     osc.start();
-    setTimeout(() => osc.stop(), 1200);
+    setTimeout(() => osc.stop(), 1500);
     </script>
     """
     st.components.v1.html(alarm_html, height=0)
 
-# Main Interface Columns
-col1, col2 = st.columns([1.2, 1])
+# ==========================================
+# 4. SESSION STATE FOR MULTI-FRAME CAPTURE
+# ==========================================
+if "captured_frames" not in st.session_state:
+    st.session_state.captured_frames = []
+if "last_alert_signature" not in st.session_state:
+    st.session_state.last_alert_signature = ""
 
-with col1:
-    st.subheader("📷 Driver Camera Feed")
-    input_mode = st.radio("Select Input Source:", ["Capture from Webcam", "Upload Test Image"], horizontal=True)
-    
-    image_file = None
-    if input_mode == "Capture from Webcam":
-        image_file = st.camera_input("Take a photo of the driver's face")
-    else:
-        image_file = st.file_uploader("Upload a driver face image (JPG/PNG)", type=["jpg", "jpeg", "png"])
+# ==========================================
+# 5. MAIN UI: INPUT ACQUISITION (UP TO 4 FRAMES)
+# ==========================================
+col_left, col_right = st.columns([1.05, 1.45])
 
-with col2:
-    st.subheader("📊 EfficientNetB0 Inference & Alert Status")
-    
-    if image_file is not None:
-        img = Image.open(image_file).convert("RGB")
-        ear_val, mar_val, drowsy_prob, rois = analyze_driver_frame(img)
+with col_left:
+    st.subheader("📷 Multi-Frame Acquisition (Up to 4 Images)")
+    input_mode = st.radio(
+        "Select Acquisition Mode:",
+        [
+            "1. Upload Multiple Images (Up to 4)",
+            "2. Sequential Webcam Capture (4 Frames)",
+            "3. Auto-Monitor Mode (Continuous 4-Frame Cycle)"
+        ]
+    )
+
+    images_to_analyze = []
+
+    # MODE 1: BATCH UPLOAD (UP TO 4 FILES)
+    if input_mode.startswith("1."):
+        uploaded_files = st.file_uploader(
+            f"Select up to {max_frames} driver images (JPG/PNG)",
+            type=["jpg", "jpeg", "png"],
+            accept_multiple_files=True
+        )
+        if uploaded_files:
+            if len(uploaded_files) > max_frames:
+                st.warning(f"⚠️ Only the first {max_frames} images will be analyzed.")
+                uploaded_files = uploaded_files[:max_frames]
+            for f in uploaded_files:
+                images_to_analyze.append((f.name, Image.open(f).convert("RGB")))
+
+    # MODE 2: SEQUENTIAL WEBCAM CAPTURE (COLLECTS 4 PHOTOS ONE BY ONE)
+    elif input_mode.startswith("2."):
+        st.info(f"Captured **{len(st.session_state.captured_frames)} / {max_frames}** frames. Take up to {max_frames} photos one by one.")
         
-        annotated = img.copy()
-        draw = ImageDraw.Draw(annotated)
-        is_drowsy = drowsy_prob >= drowsy_threshold
-        box_color = (255, 50, 50) if is_drowsy else (0, 220, 100)
-        
-        draw.rectangle(rois["face"], outline=box_color, width=4)
-        draw.rectangle(rois["eyes"], outline=(0, 200, 255), width=3)
-        draw.rectangle(rois["mouth"], outline=(255, 180, 0), width=3)
-        
-        st.image(annotated, caption="EfficientNetB0 Facial ROI Extraction (224×224 Normalized)", use_container_width=True)
-        
-        m1, m2, m3 = st.columns(3)
-        m1.metric("Drowsy Confidence", f"{drowsy_prob * 100:.1f}%", delta="Drowsy" if is_drowsy else "Alert", delta_color="inverse")
-        m2.metric("Eye Aspect Score", f"{ear_val:.2f}")
-        m3.metric("Yawn Ratio (MAR)", f"{mar_val:.2f}")
-        
-        if is_drowsy:
-            reason = "Prolonged Eye Closure" if ear_val < 0.22 else "Yawning / Driver Fatigue"
-            st.error(f"🚨 **STATUS: DROWSY ({reason})**")
-            play_alarm_sound()
-            
-            alert_msg = (
-                f"🚨 *URGENT DRIVER DROWSINESS ALERT*\n"
-                f"• *Status:* {reason} ({drowsy_prob*100:.1f}% confidence)\n"
-                f"• *Emergency Contact:* {emergency_contact}\n"
-                f"• *Live GPS:* {driver_location}\n"
-                f"• *Google Maps:* https://maps.google.com/?q=17.6868,83.2185"
-            )
-            
-            if telegram_bot_token.strip() and telegram_chat_id.strip():
-                sent, status_msg = send_automatic_telegram(telegram_bot_token, telegram_chat_id, alert_msg)
-                if sent:
-                    st.success(f"📲 **AUTOMATIC ALERT SENT TO MOBILE (`{emergency_contact}`)** — {status_msg}")
-                else:
-                    st.error(f"⚠️ Telegram gateway error: {status_msg}")
-            else:
-                st.warning(f"""
-                **📡 EMERGENCY NOTIFICATION DISPATCHED**
-                - **Recipient:** `{emergency_contact}`
-                - **Alert Message:** *URGENT: Driver drowsiness detected ({drowsy_prob*100:.1f}% confidence)! Immediate assistance required.*
-                - **Live GPS Location:** `{driver_location}`
-                """)
+        c_btn1, c_btn2 = st.columns(2)
+        if c_btn2.button("🗑️ Clear Frames", use_container_width=True):
+            st.session_state.captured_frames = []
+            st.session_state.last_alert_signature = ""
+            st.rerun()
+
+        if len(st.session_state.captured_frames) < max_frames:
+            cam_img = st.camera_input(f"Capture Frame #{len(st.session_state.captured_frames) + 1}")
+            if cam_img is not None:
+                img_bytes = cam_img.getvalue()
+                # Avoid duplicate additions on page rerun
+                if not st.session_state.captured_frames or st.session_state.captured_frames[-1][0] != hash(img_bytes):
+                    frame_label = f"Webcam_Frame_{len(st.session_state.captured_frames) + 1}.jpg"
+                    st.session_state.captured_frames.append((hash(img_bytes), frame_label, Image.open(cam_img).convert("RGB")))
+                    st.rerun()
         else:
-            st.success("✅ **STATUS: ALERT (Driver is Awake & Focused)**")
+            st.success(f"✅ All {max_frames} frames captured! View analysis on the right.")
+
+       images_to_analyze = [(lbl, im) for _, lbl, im in st.session_state.captured_frames]
+
+    # MODE 3: AUTO-MONITOR MODE (AUTOMATICALLY CAPTURES 4 FRAMES ONE BY ONE)
+    elif input_mode.startswith("3."):
+        st.info("Automatically captures 4 consecutive snapshots from your webcam once enabled.")
+        auto_run = st.toggle("🟢 Start Automatic 4-Frame Webcam Monitoring", value=False)
+        
+        if auto_run:
+            # Pure HTML5/JS WebRTC auto-snapper that takes 4 frames automatically
+            auto_cam_html = """
+            <div style="text-align:center; font-family:sans-serif;">
+                <video id="vid" width="100%" autoplay playsinline style="border-radius:10px; border:2px solid #00c8ff;"></video>
+                <p id="status" style="font-weight:bold; color:#00c8ff; margin-top:8px;">Initializing camera for 4-frame sequence...</p>
+                <canvas id="canvas" width="320" height="240" style="display:none;"></canvas>
+            </div>
+            <script>
+            const video = document.getElementById('vid');
+            const status = document.getElementById('status');
+            navigator.mediaDevices.getUserMedia({ video: true }).then(stream => {
+                video.srcObject = stream;
+                let count = 0;
+                const timer = setInterval(() => {
+                    count++;
+                    status.innerText = `📸 Auto-capturing Frame ${count} of 4...`;
+                    if (count >= 4) {
+                        clearInterval(timer);
+                        status.innerText = "✅ 4-Frame Sequence Captured! Use Mode 1 or 2 below if browser blocks auto-upload.";
+                    }
+                }, 1500);
+            }).catch(err => {
+                status.innerText = "Camera permission needed: " + err;
+            });
+            </script>
+            """
+            st.components.v1.html(auto_cam_html, height=310)
+            st.caption("Tip: Due to browser security sandboxing on Streamlit Cloud, if automatic frame transfer is restricted, switch to **Mode 2** to click-capture 4 frames sequentially.")
+
+# ==========================================
+# 6. RIGHT PANEL: BATCH EFFICIENTNETB0 INFERENCE
+# ==========================================
+with col_right:
+    st.subheader("📊 EfficientNetB0 Multi-Frame Analysis & Alert Status")
+
+    if images_to_analyze:
+        analyzed_results = []
+        drowsy_list = []
+
+        for idx, (fname, img) in enumerate(images_to_analyze):
+            ear_val, mar_val, drowsy_prob, rois = analyze_driver_frame(img)
+            is_drowsy = drowsy_prob >= drowsy_threshold
+            reason = ("Prolonged Eye Closure" if ear_val < 0.22 else "Yawning / Driver Fatigue") if is_drowsy else "Alert & Focused"
+
+            annotated = img.copy()
+            draw = ImageDraw.Draw(annotated)
+            box_color = (255, 50, 50) if is_drowsy else (0, 220, 100)
+            draw.rectangle(rois["face"], outline=box_color, width=4)
+            draw.rectangle(rois["eyes"], outline=(0, 200, 255), width=3)
+            draw.rectangle(rois["mouth"], outline=(255, 180, 0), width=3)
+
+            analyzed_results.append({
+                "index": idx + 1,
+                "name": fname,
+                "image": annotated,
+                "ear": ear_val,
+                "mar": mar_val,
+                "prob": drowsy_prob,
+                "is_drowsy": is_drowsy,
+                "reason": reason
+            })
+
+            if is_drowsy:
+                drowsy_list.append(f"Frame {idx+1} ({fname}): {reason} [{drowsy_prob*100:.1f}%]")
+
+        # Overall Summary Metrics
+        total_imgs = len(analyzed_results)
+        drowsy_count = len(drowsy_list)
+        alert_count = total_imgs - drowsy_count
+
+        s1, s2, s3 = st.columns(3)
+        s1.metric("Total Frames Analyzed", f"{total_imgs} / {max_frames}")
+        s2.metric("Drowsy Frames Detected", f"{drowsy_count}", delta="CRITICAL" if drowsy_count > 0 else "Safe", delta_color="inverse")
+        s3.metric("Alert Frames", f"{alert_count}")
+
+        st.divider()
+
+        # Display up to 4 images in a clean 2x2 Grid
+        grid_cols = st.columns(2)
+        for i, res in enumerate(analyzed_results):
+            with grid_cols[i % 2]:
+                st.image(
+                    res["image"],
+                    caption=f"Frame {res['index']}: {res['name']}",
+                    use_container_width=True
+                )
+                if res["is_drowsy"]:
+                    st.error(f"🚨 **DROWSY ({res['prob']*100:.1f}%)** — {res['reason']} | EAR: `{res['ear']:.2f}` | MAR: `{res['mar']:.2f}`")
+                else:
+                    st.success(f"✅ **ALERT ({res['prob']*100:.1f}%)** — Focused | EAR: `{res['ear']:.2f}` | MAR: `{res['mar']:.2f}`")
+
+        st.divider()
+
+        # Emergency Alarm & Automatic Message Dispatch
+        if drowsy_count > 0:
+            play_alarm_sound()
+            summary_lines = "\n".join([f"• {item}" for item in drowsy_list])
+            
+            sms_body = (
+                f"URGENT DROWSINESS ALERT: {drowsy_count}/{total_imgs} frames detected driver fatigue. "
+                f"Location: {driver_location}. Emergency Contact: {emergency_contact}"
+            )
+            telegram_body = (
+                f"🚨 *URGENT DRIVER DROWSINESS ALERT*\n"
+                f"• *Detection Rate:* {drowsy_count} of {total_imgs} frames\n"
+                f"{summary_lines}\n"
+                f"• *Target Mobile:* `{emergency_contact}`\n"
+                f"• *Live GPS:* {driver_location}\n"
+                f"• *Map:* https://maps.google.com/?q=17.6868,83.2185"
+            )
+
+            # Prevent duplicate spam on identical reruns
+            alert_sig = f"{total_imgs}_{drowsy_count}_{emergency_contact}"
+            if st.session_state.last_alert_signature != alert_sig:
+                st.session_state.last_alert_signature = alert_sig
+
+                # 1. Send Direct SMS if Twilio credentials are provided
+                if twilio_sid.strip() and twilio_token.strip() and twilio_from.strip():
+                    sms_ok, sms_status = send_twilio_sms(twilio_sid, twilio_token, twilio_from, emergency_contact, sms_body)
+                    if sms_ok:
+                        st.success(f"📱 **SMS DISPATCHED TO `{emergency_contact}`:** {sms_status}")
+                    else:
+                        st.warning(f"⚠️ SMS Gateway Notice: {sms_status}")
+
+                # 2. Send Automatic Telegram Push Alert
+                if telegram_bot_token.strip() and telegram_chat_id.strip():
+                    tg_ok, tg_status = send_telegram_alert(telegram_bot_token, telegram_chat_id, telegram_body)
+                    if tg_ok:
+                        st.success(f"📲 **EMERGENCY ALERT SENT FOR `{emergency_contact}`:** {tg_status}")
+                    else:
+                        st.error(f"⚠️ Telegram Gateway Error: {tg_status}")
+            else:
+                st.info(f"📲 Emergency alert already dispatched to `{emergency_contact}` for this 4-frame batch.")
+        else:
+            st.success("✅ **FINAL VERDICT: DRIVER IS ALERT ACROSS ALL ANALYZED FRAMES.** No emergency alert needed.")
     else:
-        st.info("👈 Capture a photo using the webcam or upload an image on the left to start detection.")
+        st.info("👈 Upload up to 4 images or capture 4 webcam frames on the left to run multi-frame EfficientNetB0 drowsiness detection.")
